@@ -1,11 +1,18 @@
 import logging
 
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 from rest_framework import serializers
 
 from surveys.answer_formatting import format_matrix_answer
 from surveys.input_validation import validate_question_input_answer
+from surveys.uploads import (
+    MAX_UPLOAD_BYTES,
+    delete_response_file_after_commit,
+    response_file_name,
+    validate_response_file,
+)
 from surveys.models import (
     Answer,
     Collector,
@@ -27,9 +34,14 @@ def _truncate_text(value, *, limit=48):
 def build_answer_summary(answer):
     question = getattr(answer, "question", None)
     question_type = getattr(question, "question_type", "")
-    choice_map = {
-        str(choice.id): choice.text for choice in getattr(question, "choices", []).all()
-    } if question is not None else {}
+    choice_map = (
+        {
+            str(choice.id): choice.text
+            for choice in getattr(question, "choices", []).all()
+        }
+        if question is not None
+        else {}
+    )
 
     if answer.choice_ids:
         selected_labels = [
@@ -43,6 +55,8 @@ def build_answer_summary(answer):
         summary = str(answer.numeric_value)
     elif answer.date_value:
         summary = answer.date_value.isoformat()
+    elif answer.file_name:
+        summary = answer.file_name
     elif answer.file_url:
         summary = answer.file_url
     elif answer.ranking_data:
@@ -81,6 +95,7 @@ class AnswerSerializer(serializers.ModelSerializer):
             "numeric_value",
             "date_value",
             "file_url",
+            "file_name",
             "matrix_data",
             "ranking_data",
             "constant_sum_data",
@@ -122,11 +137,14 @@ class SurveyResponseSerializer(serializers.ModelSerializer):
 class AnswerDetailSerializer(serializers.ModelSerializer):
     question_id = serializers.UUIDField(source="question.id", read_only=True)
     question_text = serializers.CharField(source="question.text", read_only=True)
-    question_type = serializers.CharField(source="question.question_type", read_only=True)
+    question_type = serializers.CharField(
+        source="question.question_type", read_only=True
+    )
     choice_texts = serializers.SerializerMethodField()
     ranking_texts = serializers.SerializerMethodField()
     constant_sum_items = serializers.SerializerMethodField()
     question_choices = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Answer
@@ -144,6 +162,7 @@ class AnswerDetailSerializer(serializers.ModelSerializer):
             "numeric_value",
             "date_value",
             "file_url",
+            "file_name",
             "matrix_data",
             "ranking_data",
             "constant_sum_data",
@@ -151,6 +170,11 @@ class AnswerDetailSerializer(serializers.ModelSerializer):
             "comment_text",
             "answered_at",
         ]
+
+    def get_file_url(self, obj):
+        if obj.file and self.context.get("public"):
+            return ""
+        return obj.file_url
 
     def get_choice_texts(self, obj):
         question = obj.question
@@ -239,7 +263,10 @@ class SubmitAnswerItemSerializer(serializers.Serializer):
         allow_null=True,
     )
     date_value = serializers.DateTimeField(required=False, allow_null=True)
+    # Legacy URLs may be retained, but respondents cannot supply arbitrary links.
     file_url = serializers.URLField(required=False, allow_blank=True)
+    file = serializers.FileField(required=False, write_only=True)
+    remove_file = serializers.BooleanField(required=False, default=False)
     matrix_data = serializers.JSONField(required=False, allow_null=True)
     ranking_data = serializers.JSONField(required=False, allow_null=True)
     constant_sum_data = serializers.JSONField(required=False, allow_null=True)
@@ -285,6 +312,8 @@ class SubmitAnswerSerializer(serializers.Serializer):
         answers = attrs.get("answers", [])
         send_response_copy = bool(attrs.get("send_response_copy", False))
         response_copy_email = (attrs.get("response_copy_email") or "").strip()
+        uploaded_bytes = 0
+        seen_questions = set()
 
         if collector and collector.survey_id != survey.id:
             raise serializers.ValidationError(
@@ -298,10 +327,40 @@ class SubmitAnswerSerializer(serializers.Serializer):
 
         for answer_data in answers:
             question = answer_data["question"]
+            if question.id in seen_questions:
+                raise serializers.ValidationError(
+                    {"answers": "Each question may only be submitted once."}
+                )
+            seen_questions.add(question.id)
             if question.page.survey_id != survey.id:
                 raise serializers.ValidationError(
                     {"answers": "Question does not belong to this survey."}
                 )
+
+            upload = answer_data.get("file")
+            if upload:
+                validate_response_file(question, upload)
+                uploaded_bytes += upload.size
+                if answer_data.get("remove_file"):
+                    raise serializers.ValidationError(
+                        {"answers": "Cannot upload and remove the same file."}
+                    )
+            if uploaded_bytes > MAX_UPLOAD_BYTES:
+                raise serializers.ValidationError(
+                    {"answers": "Upload no more than 20 MB of files per save."}
+                )
+
+            if answer_data.get("file_url"):
+                existing_response = self.context.get("survey_response")
+                if (
+                    not existing_response
+                    or not existing_response.answers.filter(
+                        question=question, file_url=answer_data["file_url"]
+                    ).exists()
+                ):
+                    raise serializers.ValidationError(
+                        {"answers": "Upload the file instead of supplying a file URL."}
+                    )
 
             submitted_choice_ids = {
                 str(choice_id) for choice_id in answer_data.get("choice_ids", [])
@@ -372,9 +431,11 @@ class SubmitAnswerSerializer(serializers.Serializer):
                         )
 
         if invitation_token:
-            invitation = EmailInvitation.objects.select_related(
-                "collector__survey"
-            ).filter(token=invitation_token).first()
+            invitation = (
+                EmailInvitation.objects.select_related("collector__survey")
+                .filter(token=invitation_token)
+                .first()
+            )
             if not invitation or invitation.collector.survey_id != survey.id:
                 raise serializers.ValidationError(
                     {"invitation_token": "Invitation token is invalid for this survey."}
@@ -414,7 +475,9 @@ class SubmitAnswerSerializer(serializers.Serializer):
         answers_data = validated_data.pop("answers", [])
         authenticated_user = self.context.get("authenticated_user")
         send_response_copy = bool(validated_data.pop("send_response_copy", False))
-        response_copy_email = (validated_data.pop("response_copy_email", "") or "").strip()
+        response_copy_email = (
+            validated_data.pop("response_copy_email", "") or ""
+        ).strip()
         was_completed = response.status == SurveyResponse.Status.COMPLETED
 
         if authenticated_user is not None:
@@ -464,7 +527,10 @@ class SubmitAnswerSerializer(serializers.Serializer):
 
         response.save()
 
-        if response.status == SurveyResponse.Status.COMPLETED and response.email_invitation:
+        if (
+            response.status == SurveyResponse.Status.COMPLETED
+            and response.email_invitation
+        ):
             invitation = response.email_invitation
             invitation.status = EmailInvitation.Status.COMPLETED
             if invitation.opened_at is None:
@@ -478,6 +544,9 @@ class SubmitAnswerSerializer(serializers.Serializer):
 
         for answer_data in answers_data:
             question = answer_data.pop("question")
+            answer, _ = Answer.objects.get_or_create(
+                response=response, question=question
+            )
             defaults = {
                 "choice_ids": [
                     str(choice_id) for choice_id in answer_data.get("choice_ids", [])
@@ -485,18 +554,37 @@ class SubmitAnswerSerializer(serializers.Serializer):
                 "text_value": answer_data.get("text_value", ""),
                 "numeric_value": answer_data.get("numeric_value"),
                 "date_value": answer_data.get("date_value"),
-                "file_url": answer_data.get("file_url", ""),
                 "matrix_data": answer_data.get("matrix_data"),
                 "ranking_data": answer_data.get("ranking_data"),
                 "constant_sum_data": answer_data.get("constant_sum_data"),
                 "other_text": answer_data.get("other_text", ""),
                 "comment_text": answer_data.get("comment_text", ""),
             }
-            Answer.objects.update_or_create(
-                response=response,
-                question=question,
-                defaults=defaults,
-            )
+            upload = answer_data.get("file")
+            if upload or answer_data.get("remove_file"):
+                previous_file = answer.file
+                delete_response_file_after_commit(previous_file)
+                answer.file = ""
+                answer.file_name = ""
+                answer.file_url = ""
+                if upload:
+                    answer.file.save(upload.name, upload, save=False)
+                    self.context.setdefault("saved_uploads", []).append(
+                        (answer.file.storage, answer.file.name)
+                    )
+                    answer.file_name = response_file_name(upload.name)
+                    path = reverse(
+                        "surveys:response-file",
+                        kwargs={
+                            "survey_pk": response.survey_id,
+                            "pk": response.id,
+                            "answer_pk": answer.id,
+                        },
+                    )
+                    answer.file_url = self.context["request"].build_absolute_uri(path)
+            for key, value in defaults.items():
+                setattr(answer, key, value)
+            answer.save()
 
         if (
             send_response_copy

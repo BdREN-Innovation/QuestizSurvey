@@ -1,3 +1,5 @@
 *.md
 !README.md
+!deploy/FILE_UPLOADS.md
 dump.rdb
+backend/private_uploads/

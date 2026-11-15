@@ -2,6 +2,8 @@ import uuid
 
 from django.db import models
 
+from surveys.uploads import ResponseFileStorage, response_file_path
+
 
 class Answer(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -25,6 +27,13 @@ class Answer(models.Model):
     )
     date_value = models.DateTimeField(null=True, blank=True)
     file_url = models.URLField(blank=True)
+    file = models.FileField(
+        storage=ResponseFileStorage(),
+        upload_to=response_file_path,
+        max_length=500,
+        blank=True,
+    )
+    file_name = models.CharField(max_length=255, blank=True)
     matrix_data = models.JSONField(null=True, blank=True)
     ranking_data = models.JSONField(null=True, blank=True)
     constant_sum_data = models.JSONField(null=True, blank=True)

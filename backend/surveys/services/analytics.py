@@ -809,7 +809,7 @@ class AnalyticsService:
         for answer in answers:
             if not answer.file_url:
                 continue
-            path = urlparse(answer.file_url).path or answer.file_url
+            path = answer.file_name or urlparse(answer.file_url).path or answer.file_url
             extension = os.path.splitext(path)[1].lstrip(".").lower() or "unknown"
             files.append(
                 {

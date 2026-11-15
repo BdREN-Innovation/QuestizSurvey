@@ -34,6 +34,7 @@ import { normalizeSurvey, resolveNextPreviewStep } from '@/utils/surveyBuilder'
 import {
   buildInitialPublicAnswers,
   buildResumePageHistory,
+  collectPublicAnswerFiles,
   publicAnswerHasContent,
   restorePublicAnswers,
   serializePublicAnswers,
@@ -44,6 +45,14 @@ import {
 import { buildPublicSurveyPath, buildPublicSurveyUrl } from '@/utils/publicSurveyLinks'
 
 const PUBLIC_SURVEY_STORAGE_PREFIX = 'questiz-public-survey'
+
+function getSubmissionErrorMessage(value) {
+  if (typeof value === 'string') return value
+  if (value && typeof value === 'object') {
+    return Object.values(value).map(getSubmissionErrorMessage).find(Boolean) || ''
+  }
+  return ''
+}
 
 function getSurveyStorageKey(slug, key) {
   return `${PUBLIC_SURVEY_STORAGE_PREFIX}:${slug}:${key}`
@@ -790,15 +799,27 @@ export default function PublicSurveyPage() {
       }
 
       let responseData = null
+      const files = collectPublicAnswerFiles(survey, answers)
 
       if (resumeToken) {
         responseData = await updatePublicSurvey(slug, {
           ...payload,
           resume_token: resumeToken,
-        })
+        }, files)
       } else {
-        responseData = await submitPublicSurvey(slug, payload)
+        responseData = await submitPublicSurvey(slug, payload, files)
       }
+
+      const savedAnswers = restorePublicAnswers(survey, responseData)
+      setAnswers((current) => {
+        const next = { ...current }
+        Object.keys(files).forEach((questionId) => {
+          if (current[questionId] === answers[questionId]) {
+            next[questionId] = savedAnswers[questionId]
+          }
+        })
+        return next
+      })
 
       const nextToken = responseData.resume_token || resumeToken
 
@@ -865,7 +886,7 @@ export default function PublicSurveyPage() {
         toast({
           title: 'Save failed',
           description:
-            error?.response?.data?.detail ||
+            getSubmissionErrorMessage(error?.response?.data) ||
             'We could not save your response. Please try again.',
           variant: 'error',
         })

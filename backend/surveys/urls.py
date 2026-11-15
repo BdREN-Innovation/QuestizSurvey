@@ -124,6 +124,11 @@ urlpatterns = [
         name="response-bulk-delete",
     ),
     path(
+        "surveys/<uuid:survey_pk>/responses/<uuid:pk>/files/<uuid:answer_pk>/",
+        SurveyResponseViewSet.as_view({"get": "download_file"}),
+        name="response-file",
+    ),
+    path(
         "surveys/<uuid:survey_pk>/responses/<uuid:pk>/",
         SurveyResponseViewSet.as_view({"get": "retrieve", "delete": "destroy"}),
         name="response-detail",

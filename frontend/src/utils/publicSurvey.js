@@ -17,6 +17,7 @@ import {
   OPEN_ENDED_OTHER_KEY,
   validateInputValue,
 } from '@/utils/inputValidation'
+import { isUploadFile, validateUploadFile } from '@/utils/fileUploads'
 
 export const RESPONDED_COOKIE_PREFIX = 'questiz_responded_'
 
@@ -232,7 +233,7 @@ export function restorePublicAnswers(survey, response) {
       case 'file_upload':
         answers[question.id] = buildRestoredAnswerValue(
           question,
-          answer.file_url || null,
+          answer.file_name ? { name: answer.file_name, saved: true } : answer.file_url || null,
           answer
         )
         break
@@ -431,6 +432,7 @@ export function serializePublicAnswers(survey, answers) {
           payload = {
             ...basePayload,
             file_url: typeof value === 'string' ? value : '',
+            remove_file: !value,
           }
           break
         default:
@@ -451,6 +453,15 @@ export function serializePublicAnswers(survey, answers) {
 
       return payload
     })
+}
+
+export function collectPublicAnswerFiles(survey, answers) {
+  return Object.fromEntries(
+    (survey.pages ?? []).flatMap((page) => page.questions)
+      .filter((question) => question.question_type === 'file_upload')
+      .map((question) => [question.id, getAnswerPrimaryValue(answers[question.id])])
+      .filter(([, value]) => isUploadFile(value))
+  )
 }
 
 function getEnabledDemographicFields(question) {
@@ -546,7 +557,7 @@ export function getQuestionValidationError(question, value) {
       return missingField ? 'Complete all required fields before continuing.' : ''
     }
     case 'file_upload':
-      return primaryValue ? '' : 'Add a file before continuing.'
+      return primaryValue ? inputValidationError : 'Add a file before continuing.'
     default: {
       if (!questionValueHasContent(question, primaryValue)) {
         return 'This question is required.'
@@ -560,6 +571,10 @@ export function getQuestionValidationError(question, value) {
 function getQuestionInputValidationError(question, value) {
   if (!question) {
     return ''
+  }
+
+  if (question.question_type === 'file_upload') {
+    return validateUploadFile(question, getAnswerPrimaryValue(value))
   }
 
   if (question.question_type === 'short_text' || question.question_type === 'long_text') {

@@ -1,4 +1,5 @@
 import api from '@/services/api'
+import { buildPublicSubmissionBody } from '@/utils/fileUploads'
 
 export async function fetchPublicSurvey(
   slug,
@@ -24,16 +25,20 @@ export async function fetchPublicSurvey(
   return response.data
 }
 
-export async function submitPublicSurvey(slug, payload) {
-  const response = await api.post(`/public/surveys/${slug}/`, payload, {
+export async function submitPublicSurvey(slug, payload, files = {}) {
+  const body = buildPublicSubmissionBody(payload, files)
+  const response = await api.post(`/public/surveys/${slug}/`, body, {
     preserveAuthError: true,
+    ...(body instanceof FormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}),
   })
   return response.data
 }
 
-export async function updatePublicSurvey(slug, payload) {
-  const response = await api.put(`/public/surveys/${slug}/`, payload, {
+export async function updatePublicSurvey(slug, payload, files = {}) {
+  const body = buildPublicSubmissionBody(payload, files)
+  const response = await api.put(`/public/surveys/${slug}/`, body, {
     preserveAuthError: true,
+    ...(body instanceof FormData ? { headers: { 'Content-Type': 'multipart/form-data' } } : {}),
   })
   return response.data
 }

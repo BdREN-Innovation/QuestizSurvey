@@ -78,6 +78,8 @@ class AnswerAdmin(admin.ModelAdmin):
     list_display = ("response", "question", "answered_at")
     list_filter = ("question__question_type",)
     search_fields = ("question__text", "response__respondent_email")
+    exclude = ("file",)
+    readonly_fields = ("file_name", "file_url")
 
 
 @admin.register(SavedReport)

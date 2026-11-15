@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table'
-import { AlertTriangle, Eye, Printer, Search, Trash2 } from 'lucide-react'
+import { AlertTriangle, Download, Eye, LoaderCircle, Printer, Search, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,10 +11,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   bulkDeleteSurveyResponses,
   deleteSurveyResponse,
+  downloadResponseFile,
   fetchSurveyResponse,
   listSurveyResponses,
 } from '@/services/analytics'
 import { formatDuration } from '@/lib/analytics'
+import { useToast } from '@/hooks/useToast'
 
 const STATUS_VARIANTS = {
   completed: 'success',
@@ -48,7 +50,52 @@ function normalizeResponseListPayload(payload) {
   }
 }
 
-function RenderAnswer({ answer }) {
+function UploadedFileAnswer({ answer, surveyId, responseId }) {
+  const [downloading, setDownloading] = useState(false)
+  const { toast } = useToast()
+
+  if (!answer.file_url) {
+    return <p className="text-sm text-muted-foreground">No file available.</p>
+  }
+
+  if (!answer.file_name) {
+    // Keep historical, externally hosted file links usable.
+    if (!/^https?:\/\//i.test(answer.file_url)) {
+      return <p className="text-sm text-muted-foreground">No file available.</p>
+    }
+    return (
+      <a href={answer.file_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+        Open uploaded file
+      </a>
+    )
+  }
+
+  const download = async () => {
+    setDownloading(true)
+    try {
+      await downloadResponseFile(surveyId, responseId, answer.id, answer.file_name)
+    } catch (error) {
+      toast({
+        title: 'Download failed',
+        description: error.response?.status === 404
+          ? 'This file is no longer available.'
+          : 'The file could not be downloaded. Please try again.',
+        variant: 'error',
+      })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  return (
+    <Button type="button" variant="outline" className="max-w-full justify-start" disabled={downloading} onClick={download} title={answer.file_name}>
+      {downloading ? <LoaderCircle className="mr-2 h-4 w-4 shrink-0 animate-spin" /> : <Download className="mr-2 h-4 w-4 shrink-0" />}
+      <span className="truncate">{downloading ? 'Downloading…' : `Download ${answer.file_name}`}</span>
+    </Button>
+  )
+}
+
+function RenderAnswer({ answer, surveyId, responseId }) {
   switch (answer.question_type) {
     case 'multiple_choice_single':
     case 'multiple_choice_multi':
@@ -159,11 +206,7 @@ function RenderAnswer({ answer }) {
         </div>
       )
     case 'file_upload':
-      return (
-        <a href={answer.file_url} target="_blank" rel="noreferrer" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
-          Open uploaded file
-        </a>
-      )
+      return <UploadedFileAnswer answer={answer} surveyId={surveyId} responseId={responseId} />
     default:
       return <p className="text-sm text-muted-foreground">No renderer for this answer type.</p>
   }
@@ -518,7 +561,7 @@ export default function ResponseBrowser({
                       </h3>
                     </div>
                     <div className="mt-4">
-                      <RenderAnswer answer={answer} />
+                      <RenderAnswer answer={answer} surveyId={surveyId} responseId={detailData.id} />
                     </div>
                   </div>
                 ))}

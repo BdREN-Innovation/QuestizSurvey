@@ -1,11 +1,13 @@
 from django.conf import settings
 from django.db import transaction
+from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.parsers import JSONParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -25,8 +27,10 @@ from surveys.serializers import (
     SurveyResponseSerializer,
 )
 from surveys.throttles import PublicSurveyStartThrottle, PublicSurveyUpdateThrottle
+from surveys.uploads import SurveySubmissionMultipartParser, cleanup_failed_uploads
 
 from .common import get_owned_survey
+
 
 class SurveyResponseViewSet(
     mixins.ListModelMixin,
@@ -75,12 +79,33 @@ class SurveyResponseViewSet(
             return "-started_at"
         return ordering
 
+    def download_file(self, request, survey_pk=None, pk=None, answer_pk=None):
+        survey_response = self.get_object()
+        answer = get_object_or_404(Answer, id=answer_pk, response=survey_response)
+        if not answer.file:
+            raise Http404("No file is available for this answer.")
+        try:
+            file = answer.file.open("rb")
+        except FileNotFoundError as exc:
+            raise Http404("The uploaded file is no longer available.") from exc
+        response = FileResponse(
+            file,
+            as_attachment=True,
+            filename=answer.file_name,
+            content_type="application/octet-stream",
+        )
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
     @action(detail=False, methods=["post"], url_path="bulk-delete")
     def bulk_delete(self, request, survey_pk=None):
         serializer = BulkDeleteResponsesSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        queryset = self.get_survey().responses.filter(id__in=serializer.validated_data["ids"])
+        queryset = self.get_survey().responses.filter(
+            id__in=serializer.validated_data["ids"]
+        )
         deleted_count = queryset.count()
         queryset.delete()
 
@@ -89,6 +114,7 @@ class SurveyResponseViewSet(
 
 class PublicSurveyView(APIView):
     permission_classes = [AllowAny]
+    parser_classes = [JSONParser, SurveySubmissionMultipartParser]
     throttle_classes = []
     completion_cookie_days = 30
 
@@ -170,9 +196,11 @@ class PublicSurveyView(APIView):
         if not invitation_token:
             return None
 
-        invitation = EmailInvitation.objects.select_related(
-            "collector__survey"
-        ).filter(token=invitation_token).first()
+        invitation = (
+            EmailInvitation.objects.select_related("collector__survey")
+            .filter(token=invitation_token)
+            .first()
+        )
         if not invitation or invitation.collector.survey_id != survey.id:
             return None
 
@@ -188,7 +216,9 @@ class PublicSurveyView(APIView):
     def is_password_session_authorized(self, request, survey, collector):
         if not request:
             return False
-        return bool(request.session.get(self.get_password_session_key(survey, collector)))
+        return bool(
+            request.session.get(self.get_password_session_key(survey, collector))
+        )
 
     def authorize_password_session(self, request, survey, collector):
         if not request or not collector:
@@ -262,10 +292,9 @@ class PublicSurveyView(APIView):
 
         response_limit = settings.get("response_limit")
         if response_limit not in (None, "", 0, "0") and not resume_token:
-            if (
-                survey.responses.filter(status=SurveyResponse.Status.COMPLETED).count()
-                >= int(response_limit)
-            ):
+            if survey.responses.filter(
+                status=SurveyResponse.Status.COMPLETED
+            ).count() >= int(response_limit):
                 return self.build_block_response(
                     "This survey is no longer accepting responses.",
                     status.HTTP_410_GONE,
@@ -295,10 +324,13 @@ class PublicSurveyView(APIView):
                     )
             else:
                 client_ip = get_client_ip(request)
-                if client_ip and survey.responses.filter(
-                    ip_address=client_ip,
-                    status=SurveyResponse.Status.COMPLETED,
-                ).exists():
+                if (
+                    client_ip
+                    and survey.responses.filter(
+                        ip_address=client_ip,
+                        status=SurveyResponse.Status.COMPLETED,
+                    ).exists()
+                ):
                     return self.build_block_response(
                         "You have already completed this survey.",
                         status.HTTP_403_FORBIDDEN,
@@ -349,9 +381,11 @@ class PublicSurveyView(APIView):
         collector = (
             survey_response.collector
             if survey_response and survey_response.collector_id
-            else invitation.collector
-            if invitation
-            else self.get_public_collector(survey)
+            else (
+                invitation.collector
+                if invitation
+                else self.get_public_collector(survey)
+            )
         )
         block_response = self.get_public_block(
             survey,
@@ -377,7 +411,7 @@ class PublicSurveyView(APIView):
 
         if survey_response:
             response_data["response"] = SurveyResponseDetailSerializer(
-                survey_response
+                survey_response, context={"public": True}
             ).data
 
         return Response(response_data, status=status.HTTP_200_OK)
@@ -390,7 +424,9 @@ class PublicSurveyView(APIView):
         invitation = self.get_requested_invitation(
             survey, request.data.get("invitation_token")
         )
-        collector = invitation.collector if invitation else self.get_public_collector(survey)
+        collector = (
+            invitation.collector if invitation else self.get_public_collector(survey)
+        )
         block_response = self.get_public_block(
             survey,
             collector,
@@ -412,6 +448,7 @@ class PublicSurveyView(APIView):
             data=request.data,
             context={
                 "survey": survey,
+                "request": request,
                 "default_collector": collector,
                 "authenticated_user": (
                     request.user
@@ -424,8 +461,10 @@ class PublicSurveyView(APIView):
             },
         )
         serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            status_value = serializer.validated_data.get("status", SurveyResponse.Status.IN_PROGRESS)
+        with cleanup_failed_uploads(serializer.context), transaction.atomic():
+            status_value = serializer.validated_data.get(
+                "status", SurveyResponse.Status.IN_PROGRESS
+            )
             if status_value == SurveyResponse.Status.COMPLETED:
                 license_check = LicenseService.check_can_accept_response(
                     survey,
@@ -435,7 +474,9 @@ class PublicSurveyView(APIView):
                     return self.build_plan_limit_response(license_check.message)
             survey_response = serializer.create_response()
         survey_response = self.get_response_queryset().get(id=survey_response.id)
-        response_serializer = SurveyResponseDetailSerializer(survey_response)
+        response_serializer = SurveyResponseDetailSerializer(
+            survey_response, context={"public": True}
+        )
         response = Response(response_serializer.data, status=status.HTTP_201_CREATED)
         if survey_response.status == SurveyResponse.Status.COMPLETED:
             self.apply_completion_cookie(response, survey.slug)
@@ -490,6 +531,8 @@ class PublicSurveyView(APIView):
             data=request.data,
             context={
                 "survey": survey,
+                "request": request,
+                "survey_response": survey_response,
                 "default_collector": collector,
                 "authenticated_user": (
                     request.user
@@ -502,8 +545,10 @@ class PublicSurveyView(APIView):
             },
         )
         serializer.is_valid(raise_exception=True)
-        with transaction.atomic():
-            next_status = serializer.validated_data.get("status", survey_response.status)
+        with cleanup_failed_uploads(serializer.context), transaction.atomic():
+            next_status = serializer.validated_data.get(
+                "status", survey_response.status
+            )
             if (
                 next_status == SurveyResponse.Status.COMPLETED
                 and survey_response.status != SurveyResponse.Status.COMPLETED
@@ -516,11 +561,14 @@ class PublicSurveyView(APIView):
                     return self.build_plan_limit_response(license_check.message)
             updated_response = serializer.update_response(survey_response)
         updated_response = self.get_response_queryset().get(id=updated_response.id)
-        response_serializer = SurveyResponseDetailSerializer(updated_response)
+        response_serializer = SurveyResponseDetailSerializer(
+            updated_response, context={"public": True}
+        )
         response = Response(response_serializer.data, status=status.HTTP_200_OK)
         if updated_response.status == SurveyResponse.Status.COMPLETED:
             self.apply_completion_cookie(response, survey.slug)
         return response
+
 
 class PublicSurveyLoadView(PublicSurveyView):
     permission_classes = [AllowAny]

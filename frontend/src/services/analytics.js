@@ -73,6 +73,21 @@ export async function fetchSurveyResponse(surveyId, responseId) {
   return response.data
 }
 
+export async function downloadResponseFile(surveyId, responseId, answerId, fileName) {
+  const response = await api.get(
+    `/surveys/${surveyId}/responses/${responseId}/files/${answerId}/`,
+    { responseType: 'blob' }
+  )
+  const url = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName || 'survey-upload'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export async function deleteSurveyResponse(surveyId, responseId) {
   await api.delete(`/surveys/${surveyId}/responses/${responseId}/`)
 }
