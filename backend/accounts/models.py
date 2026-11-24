@@ -114,3 +114,46 @@ class EmailVerificationToken(models.Model):
     @property
     def is_expired(self):
         return self.expires_at <= timezone.now()
+
+
+class ExternalIdentity(models.Model):
+    """A sign-in identity at an external OpenID Connect provider, linked to a Questiz user.
+
+    The link is keyed by the provider's (issuer, subject) and never by email, so the user's
+    email can change on either side. Deleting the row only removes the SSO link; the user,
+    their password login and their data are untouched.
+    """
+
+    class LinkedVia(models.TextChoices):
+        SIGNUP = "signup", "Created by SSO sign-in"
+        PROFILE = "profile", "Linked from profile"
+        VERIFIED_EMAIL = "verified_email", "Linked by verified email"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="external_identities",
+    )
+    issuer = models.CharField(max_length=255)
+    subject = models.CharField(max_length=255)
+    email_at_link = models.EmailField(blank=True, default="")
+    linked_via = models.CharField(max_length=20, choices=LinkedVia.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issuer", "subject"],
+                name="accounts_external_identity_issuer_subject_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "issuer"],
+                name="accounts_external_identity_user_issuer_unique",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.issuer} {self.subject} -> {self.user_id}"

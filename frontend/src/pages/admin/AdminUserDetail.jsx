@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/card'
 import { CustomSelect } from '@/components/ui/custom-select'
 import { getAdminUserDetail, sendAdminPasswordReset, updateAdminUser } from '@/services/admin'
+import { useBillingConfig } from '@/services/billing'
 
 import { formatDateTime, formatMoney, titleize } from './admin-helpers'
 
@@ -22,6 +23,7 @@ export default function AdminUserDetail() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
   const [selectedPlanId, setSelectedPlanId] = useState('')
+  const { managedExternally, providerLabel } = useBillingConfig()
   const [savingPlan, setSavingPlan] = useState(false)
   const [savingStatus, setSavingStatus] = useState(false)
   const [sendingReset, setSendingReset] = useState(false)
@@ -169,7 +171,32 @@ export default function AdminUserDetail() {
                 {user.email_verified ? 'Email verified' : 'Unverified'}
               </Badge>
               {user.is_superuser ? <Badge variant="outline">Superuser</Badge> : null}
+              {user.has_usable_password === false ? (
+                <Badge variant="warning">No password</Badge>
+              ) : null}
             </div>
+            {user.external_identities?.length ? (
+              <div className="sm:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Single sign-on
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {user.external_identities.map((identity) => (
+                    <li
+                      key={identity.id}
+                      className="rounded-[1rem] border border-[rgb(var(--theme-border-rgb)/0.76)] bg-white/80 px-4 py-3 text-sm"
+                    >
+                      <p className="font-medium text-foreground break-all">{identity.issuer}</p>
+                      <p className="mt-1 text-muted-foreground break-all">
+                        Subject {identity.subject} · linked {formatDateTime(identity.created_at)} via{' '}
+                        {identity.linked_via.replace('_', ' ')} · last SSO sign-in{' '}
+                        {formatDateTime(identity.last_login_at)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -192,6 +219,12 @@ export default function AdminUserDetail() {
               </p>
             </div>
 
+            {managedExternally ? (
+              <p className="rounded-[1.2rem] border border-dashed border-[rgb(var(--theme-border-rgb)/0.76)] px-4 py-3 text-sm text-muted-foreground">
+                Plans are managed on {providerLabel}. The record above is this account&apos;s old Questiz
+                subscription and no longer sets its limits; change the user&apos;s package on {providerLabel}.
+              </p>
+            ) : (
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Manual plan override</p>
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -205,6 +238,7 @@ export default function AdminUserDetail() {
                 </Button>
               </div>
             </div>
+            )}
 
             <div className="flex flex-wrap gap-3">
               <Button variant="outline" className="rounded-xl" onClick={handleStatusToggle} disabled={savingStatus}>

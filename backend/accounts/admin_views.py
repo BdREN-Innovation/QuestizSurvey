@@ -3,7 +3,7 @@ import csv
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from questizsurvey.audit import log_audit_event
+from subscriptions import bdren
 from subscriptions.admin_services import AdminPaymentsService
 from subscriptions.bkash_service import (
     BkashConfigurationError,
@@ -40,7 +41,7 @@ from .admin_serializers import (
     SubscriptionEventSerializer,
 )
 from .ai_testing import AITestConnectionError, AITestService
-from .models import SiteSettings
+from .models import ExternalIdentity, SiteSettings
 from .password_reset import send_password_reset_email
 from .throttles import AdminRateThrottle
 
@@ -116,6 +117,7 @@ class AdminUsersView(AdminAPIView):
                 filter=Q(surveys__responses__status="completed"),
                 distinct=True,
             ),
+            sso_linked=Exists(ExternalIdentity.objects.filter(user=OuterRef("pk"))),
         )
 
         search = (request.query_params.get("search") or "").strip()
@@ -134,6 +136,10 @@ class AdminUsersView(AdminAPIView):
         is_active = (request.query_params.get("is_active") or "").strip().lower()
         if is_active in {"true", "false"}:
             queryset = queryset.filter(is_active=(is_active == "true"))
+
+        sso_linked = (request.query_params.get("sso_linked") or "").strip().lower()
+        if sso_linked in {"true", "false"}:
+            queryset = queryset.filter(sso_linked=(sso_linked == "true"))
 
         ordering = (request.query_params.get("ordering") or "-created_at").strip()
         ordering_map = {
@@ -247,6 +253,15 @@ class AdminUserDetailView(AdminAPIView):
                     )
                 locked_user.is_active = next_is_active
                 locked_user.save(update_fields=["is_active"])
+
+            if "plan_id" in validated and bdren.is_bdren_mode():
+                return Response(
+                    {
+                        **bdren.gone_payload(),
+                        "detail": "Plans are managed on bdren.ai; change this user's package there.",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             if "plan_id" in validated:
                 plan = get_object_or_404(Plan.objects.filter(is_active=True), pk=validated["plan_id"])

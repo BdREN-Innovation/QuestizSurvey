@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 
+from . import bdren
 from .bkash_service import BkashService, BkashServiceError
 from .models import BkashTransaction, UserSubscription
 from .services import LicenseService
@@ -43,6 +44,8 @@ def _should_send_reminder(subscription):
 
 @shared_task
 def check_expiring_subscriptions():
+    if bdren.is_bdren_mode():
+        return 0  # bdren.ai sends its own renewal reminders
     now = timezone.now()
     cutoff = now + relativedelta(days=LicenseService.BKASH_REMINDER_WINDOW_DAYS)
     renew_url = _build_profile_url()
@@ -81,6 +84,8 @@ def check_expiring_subscriptions():
 
 @shared_task
 def check_expired_subscriptions():
+    if bdren.is_bdren_mode():
+        return 0  # local subscriptions are not used while bdren.ai manages plans
     grace_cutoff = timezone.now() - relativedelta(
         days=LicenseService.BKASH_GRACE_PERIOD_DAYS
     )

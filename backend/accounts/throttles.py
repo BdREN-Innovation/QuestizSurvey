@@ -84,3 +84,21 @@ class AdminRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": request.user.pk,
         }
+
+
+class SSORateThrottle(SimpleRateThrottle):
+    """Per-address limit on starting and finishing SSO sign-ins."""
+
+    scope = "public_sso"
+    rate = None
+    default_rate = "30/min"
+
+    def get_rate(self):
+        return getattr(settings, "SSO_RATE_LIMIT", self.default_rate)
+
+    def get_cache_key(self, request, view):
+        client_ip = get_request_ip_address(request) or "unknown"
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": client_ip,
+        }

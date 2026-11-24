@@ -7,7 +7,6 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
-from subscriptions.serializers import PlanSummarySerializer
 from subscriptions.services import LicenseService
 
 User = get_user_model()
@@ -74,6 +73,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     current_plan = serializers.SerializerMethodField()
     can_access_admin = serializers.SerializerMethodField()
+    has_usable_password = serializers.SerializerMethodField()
+    sso_linked = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -91,14 +92,23 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "email_verified",
             "current_plan",
+            "has_usable_password",
+            "sso_linked",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_has_usable_password(self, obj):
+        return obj.has_usable_password()
+
+    def get_sso_linked(self, obj):
+        from .sso import linked_identity
+
+        return linked_identity(obj) is not None
+
     def get_current_plan(self, obj):
-        plan = LicenseService.get_user_plan(obj)
-        return PlanSummarySerializer(plan).data
+        return LicenseService.get_effective_plan(obj).summary()
 
     def get_can_access_admin(self, obj):
         return bool(obj.is_superuser)

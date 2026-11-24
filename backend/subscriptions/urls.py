@@ -7,7 +7,12 @@ from .bkash_views import (
     bkash_webhook_view,
 )
 from .views import CurrentSubscriptionView, PlanListView, SubscriptionUsageView
-from .views import SubscriptionCancelView
+from .views import (
+    SubscriptionCancelView,
+    bdren_webhook_view,
+    billing_config_view,
+    local_billing_only,
+)
 from .stripe_views import (
     StripeCheckoutView,
     StripeConfigView,
@@ -20,6 +25,8 @@ from .stripe_views import (
 app_name = "subscriptions"
 
 urlpatterns = [
+    path("billing/config/", billing_config_view, name="billing-config"),
+    path("billing/bdren/webhook/", bdren_webhook_view, name="bdren-webhook"),
     path("plans/", PlanListView.as_view(), name="plan-list"),
     path(
         "subscription/", CurrentSubscriptionView.as_view(), name="subscription-detail"
@@ -37,7 +44,7 @@ urlpatterns = [
     path("payments/stripe/config/", StripeConfigView.as_view(), name="stripe-config"),
     path(
         "payments/stripe/create-checkout/",
-        StripeCheckoutView.as_view(),
+        local_billing_only(StripeCheckoutView.as_view()),
         name="stripe-create-checkout",
     ),
     path(
@@ -51,7 +58,7 @@ urlpatterns = [
         name="stripe-session-status",
     ),
     path("payments/stripe/webhook/", stripe_webhook_view, name="stripe-webhook"),
-    path("payments/bkash/create/", BkashCheckoutView.as_view(), name="bkash-create"),
+    path("payments/bkash/create/", local_billing_only(BkashCheckoutView.as_view()), name="bkash-create"),
     path("payments/bkash/callback/", bkash_callback_view, name="bkash-callback"),
     path("payments/bkash/webhook/", bkash_webhook_view, name="bkash-webhook"),
     path(

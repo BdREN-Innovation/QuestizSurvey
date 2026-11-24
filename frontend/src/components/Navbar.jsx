@@ -14,10 +14,13 @@ import { ClipboardList, CreditCard, Star, User, LogOut, LayoutDashboard, Setting
 import BrandLogo from '@/components/branding/BrandLogo'
 import ThemeStudioDialog from '@/components/theme/ThemeStudioDialog'
 import { resolveApiAssetUrl } from '@/services/api'
+import PlanLink from '@/components/subscription/PlanLink'
+import { useBillingConfig } from '@/services/billing'
 
 const Navbar = () => {
   const { user, logout, isAuthenticated } = useAuth()
   const navigate = useNavigate()
+  const { managedExternally, manageUrl } = useBillingConfig()
   const currentPlanSlug = (user?.current_plan?.slug || 'free').toLowerCase()
   const currentPlanTier = Number(user?.current_plan?.tier || 0)
   const isUpgraded =
@@ -50,7 +53,7 @@ const Navbar = () => {
 
           <div className="flex items-center gap-3 md:gap-4">
             <div className="hidden md:block">
-              <Link to="/pricing">
+              <PlanLink>
                 <Button
                   className={
                     isUpgraded
@@ -61,7 +64,7 @@ const Navbar = () => {
                   {isUpgraded ? <Star className="mr-2 h-4 w-4 text-white" /> : <CreditCard className="mr-2 h-4 w-4 text-white" />}
                   {isUpgraded ? 'Pro' : 'Upgrade'}
                 </Button>
-              </Link>
+              </PlanLink>
             </div>
             {isAuthenticated ? (
               <>
@@ -105,7 +108,13 @@ const Navbar = () => {
                       <User className="mr-2 h-4 w-4" />
                       <span>Profile</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => navigate('/pricing')}>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        managedExternally && manageUrl
+                          ? window.open(manageUrl, '_blank', 'noopener,noreferrer')
+                          : navigate('/pricing')
+                      }
+                    >
                       <CreditCard className="mr-2 h-4 w-4" />
                       <span>Upgrade</span>
                     </DropdownMenuItem>

@@ -1,7 +1,7 @@
-import { Link } from 'react-router-dom'
 import { AlertTriangle, ArrowRight, Sparkles } from 'lucide-react'
 
 import PlanBadge from '@/components/subscription/PlanBadge'
+import PlanLink from '@/components/subscription/PlanLink'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
@@ -69,10 +69,10 @@ function UsageBanner({ usage, className }) {
         </div>
 
         <Button asChild className="min-w-40 rounded-full">
-          <Link to="/pricing">
+          <PlanLink>
             Upgrade plan
             <ArrowRight className="ml-2 h-4 w-4" />
-          </Link>
+          </PlanLink>
         </Button>
       </div>
     </div>
