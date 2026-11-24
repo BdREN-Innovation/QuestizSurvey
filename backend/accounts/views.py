@@ -18,6 +18,8 @@ from rest_framework_simplejwt.exceptions import TokenError
 
 from questizsurvey.audit import log_audit_event
 
+from . import sso
+
 from .models import EmailVerificationToken
 from .subnet_limits import (
     compute_registration_subnet,
@@ -274,6 +276,13 @@ class VerifiedTokenRefreshView(TokenRefreshView):
             response = Response({"detail": "Refresh token is invalid or expired."}, status=status.HTTP_401_UNAUTHORIZED)
             clear_refresh_cookie(response)
             return response
+        except TokenError:
+            # Blacklisted: usually a concurrent refresh already rotated it (another tab, or a
+            # duplicate request). Keep the cookie, which may already hold the newer token.
+            return Response(
+                {"detail": "Refresh token is invalid or expired."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
         response_payload = dict(serializer.validated_data)
         rotated_refresh = (response_payload.pop("refresh", "") or "").strip()
@@ -297,14 +306,21 @@ def logout_view(request):
         or get_refresh_token_from_request(request)
     )
 
+    signed_in_with_sso = False
     if refresh_token:
         try:
             token = RefreshToken(refresh_token)
+            signed_in_with_sso = token.get(sso.AUTH_METHOD_CLAIM) == sso.AUTH_METHOD_SSO
             token.blacklist()
         except Exception:
             logger.warning("Refresh token blacklist failed during logout.", exc_info=True)
 
-    response = Response({"message": "Logout successful."}, status=status.HTTP_200_OK)
+    payload = {"message": "Logout successful."}
+    if signed_in_with_sso:
+        sso_logout_url = sso.build_logout_url()
+        if sso_logout_url:
+            payload["sso_logout_url"] = sso_logout_url
+    response = Response(payload, status=status.HTTP_200_OK)
     clear_refresh_cookie(response)
     return response
 

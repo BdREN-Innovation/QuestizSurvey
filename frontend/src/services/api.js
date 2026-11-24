@@ -32,21 +32,33 @@ export function clearAccessToken() {
   inMemoryAccessToken = ''
 }
 
-export async function refreshAccessToken() {
-  const response = await axios.post(
-    `${API_URL}/auth/token/refresh/`,
-    {},
-    {
-      withCredentials: true,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    }
-  )
+// Refresh tokens rotate and the old one is blacklisted, so two refreshes sent at once with
+// the same cookie make the second fail. Callers that overlap share one request instead.
+let refreshInFlight = null
 
-  const nextAccessToken = response.data?.access || ''
-  setAccessToken(nextAccessToken)
-  return nextAccessToken
+export function refreshAccessToken() {
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(
+        `${API_URL}/auth/token/refresh/`,
+        {},
+        {
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      )
+      .then((response) => {
+        const nextAccessToken = response.data?.access || ''
+        setAccessToken(nextAccessToken)
+        return nextAccessToken
+      })
+      .finally(() => {
+        refreshInFlight = null
+      })
+  }
+  return refreshInFlight
 }
 
 export function resolveApiAssetUrl(value) {

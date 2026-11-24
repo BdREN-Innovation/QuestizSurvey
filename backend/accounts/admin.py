@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.http import HttpResponseRedirect
 from django.urls import reverse
 
-from .models import EmailVerificationToken, SiteSettings
+from .models import EmailVerificationToken, ExternalIdentity, SiteSettings
 
 User = get_user_model()
 
@@ -129,3 +129,12 @@ class EmailVerificationTokenAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(ExternalIdentity)
+class ExternalIdentityAdmin(admin.ModelAdmin):
+    list_display = ("user", "issuer", "linked_via", "created_at", "last_login_at")
+    list_filter = ("issuer", "linked_via")
+    search_fields = ("user__username", "user__email", "subject", "email_at_link")
+    readonly_fields = ("issuer", "subject", "email_at_link", "linked_via", "created_at", "last_login_at")
+    raw_id_fields = ("user",)

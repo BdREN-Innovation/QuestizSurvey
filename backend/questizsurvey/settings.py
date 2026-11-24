@@ -430,6 +430,44 @@ AUTH_REFRESH_COOKIE_PATH = os.environ.get("AUTH_REFRESH_COOKIE_PATH", "/api/auth
 AUTH_REFRESH_COOKIE_SECURE = env_bool("AUTH_REFRESH_COOKIE_SECURE", IS_PRODUCTION)
 AUTH_REFRESH_COOKIE_SAMESITE = os.environ.get("AUTH_REFRESH_COOKIE_SAMESITE", "Lax")
 AUTH_REFRESH_COOKIE_DOMAIN = os.environ.get("AUTH_REFRESH_COOKIE_DOMAIN", "").strip()
+
+# Single sign-on through an external OpenID Connect provider (bdren.ai's ZITADEL).
+# Off unless SSO_ENABLED is set; password login is never affected by these settings.
+SSO_ENABLED = env_bool("SSO_ENABLED", False)
+SSO_PROVIDER_LABEL = os.environ.get("SSO_PROVIDER_LABEL", "bdren.ai").strip() or "SSO"
+SSO_ISSUER = os.environ.get("SSO_ISSUER", "").strip().rstrip("/")
+SSO_CLIENT_ID = os.environ.get("SSO_CLIENT_ID", "").strip()
+SSO_CLIENT_SECRET = os.environ.get("SSO_CLIENT_SECRET", "").strip()
+SSO_SCOPES = os.environ.get("SSO_SCOPES", "openid profile email").strip()
+SSO_REDIRECT_URI = os.environ.get("SSO_REDIRECT_URI", "").strip()
+SSO_ALLOW_SIGNUP = env_bool("SSO_ALLOW_SIGNUP", True)
+SSO_LINK_BY_VERIFIED_EMAIL = env_bool("SSO_LINK_BY_VERIFIED_EMAIL", False)
+SSO_CLAIM_ORGANIZATION = os.environ.get("SSO_CLAIM_ORGANIZATION", "").strip()
+SSO_RP_LOGOUT = env_bool("SSO_RP_LOGOUT", False)
+SSO_POST_LOGOUT_REDIRECT_URI = os.environ.get("SSO_POST_LOGOUT_REDIRECT_URI", "").strip()
+SSO_HTTP_TIMEOUT = env_int("SSO_HTTP_TIMEOUT", 10, minimum=1)
+SSO_RATE_LIMIT = env_throttle_rate("SSO_RATE_LIMIT", "30/min")
+
+if SSO_ENABLED:
+    _missing_sso = [
+        name
+        for name, value in (
+            ("SSO_ISSUER", SSO_ISSUER),
+            ("SSO_CLIENT_ID", SSO_CLIENT_ID),
+            ("SSO_CLIENT_SECRET", SSO_CLIENT_SECRET),
+            ("SSO_REDIRECT_URI", SSO_REDIRECT_URI),
+        )
+        if not value
+    ]
+    if _missing_sso:
+        raise ImproperlyConfigured(
+            "SSO_ENABLED is true but these are not set: " + ", ".join(_missing_sso)
+        )
+    if not SSO_ISSUER.startswith("https://"):
+        raise ImproperlyConfigured("SSO_ISSUER must be an https:// URL.")
+    if "openid" not in SSO_SCOPES.split():
+        raise ImproperlyConfigured("SSO_SCOPES must include 'openid'.")
+
 TRUSTED_PROXY_IPS = env_list("TRUSTED_PROXY_IPS", [])
 BKASH_CALLBACK_TRUSTED_IPS = env_list("BKASH_CALLBACK_TRUSTED_IPS", [])
 BKASH_WEBHOOK_TOPIC_ARN = os.environ.get("BKASH_WEBHOOK_TOPIC_ARN", "").strip()

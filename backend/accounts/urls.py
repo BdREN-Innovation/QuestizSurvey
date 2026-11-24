@@ -5,6 +5,13 @@ from .password_reset_views import (
     PasswordResetRequestView,
     PasswordResetValidateView,
 )
+from .sso_views import (
+    sso_callback_view,
+    sso_config_view,
+    sso_link_start_view,
+    sso_login_view,
+    sso_unlink_view,
+)
 from .views import (
     RegisterView,
     VerifiedTokenRefreshView,
@@ -53,6 +60,12 @@ urlpatterns = [
         PasswordResetConfirmView.as_view(),
         name="password_reset_confirm",
     ),
+    # Single sign-on (off unless SSO_ENABLED; see accounts/sso.py)
+    path("sso/config/", sso_config_view, name="sso_config"),
+    path("sso/login/", sso_login_view, name="sso_login"),
+    path("sso/callback/", sso_callback_view, name="sso_callback"),
+    path("sso/link/", sso_link_start_view, name="sso_link_start"),
+    path("sso/unlink/", sso_unlink_view, name="sso_unlink"),
     # User management
     path("user/", get_user_view, name="get_user"),
     path("user/update/", UpdateProfileView.as_view(), name="update_profile"),

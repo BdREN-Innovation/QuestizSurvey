@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ArrowRight, LoaderCircle, MailCheck } from 'lucide-react'
 
 import BrandLogo from '@/components/branding/BrandLogo'
+import SsoSignInButton from '@/components/auth/SsoSignInButton'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/hooks/useToast'
@@ -189,6 +190,8 @@ const Register = () => {
                         Sign in
                       </Link>
                     </p>
+
+                    <SsoSignInButton next={redirectTo} mode="signup" className="mt-5" />
 
                     <form onSubmit={handleSubmit} className="mt-5 space-y-3">
                       {error && (

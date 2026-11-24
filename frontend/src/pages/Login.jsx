@@ -3,14 +3,17 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ArrowRight, LoaderCircle, MailCheck } from 'lucide-react'
 
 import BrandLogo from '@/components/branding/BrandLogo'
+import SsoSignInButton from '@/components/auth/SsoSignInButton'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '@/hooks/useToast'
 import { Button } from '@/components/ui/button'
 import { getSafeRedirect } from '@/utils/redirects'
+import { ssoErrorMessage } from '@/services/sso'
 
 const Login = () => {
+  const [searchParams] = useSearchParams()
   const [formData, setFormData] = useState({ username: '', password: '' })
-  const [error, setError] = useState('')
+  const [error, setError] = useState(() => ssoErrorMessage(searchParams.get('sso_error')))
   const [loading, setLoading] = useState(false)
   const [recoveryIdentifier, setRecoveryIdentifier] = useState('')
   const [resending, setResending] = useState(false)
@@ -19,7 +22,6 @@ const Login = () => {
   const { login, resendVerificationEmail, isAuthenticated, loading: authLoading } = useAuth()
   const { toast } = useToast()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const redirectTo = getSafeRedirect(searchParams.get('redirect'))
 
   useEffect(() => {
@@ -131,6 +133,8 @@ const Login = () => {
                 <p className="mt-1 text-sm text-muted-foreground">
                   Enter your credentials to continue.
                 </p>
+
+                <SsoSignInButton next={redirectTo} className="mt-7" />
 
                 <form onSubmit={handleSubmit} className="mt-7 space-y-5">
                   {recoveryIdentifier ? (

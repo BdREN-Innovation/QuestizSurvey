@@ -149,12 +149,18 @@ export const AuthProvider = ({ children }) => {
 
   // Logout function
   const logout = async () => {
+    let ssoLogoutUrl = ''
     try {
-      await api.post('/auth/logout/', {})
+      const response = await api.post('/auth/logout/', {})
+      ssoLogoutUrl = response.data?.sso_logout_url || ''
     } catch (err) {
       console.error('Logout error:', err)
     } finally {
       clearAuthState()
+    }
+    // Only sent when SSO_RP_LOGOUT is on and this session came from single sign-on.
+    if (ssoLogoutUrl) {
+      window.location.assign(ssoLogoutUrl)
     }
   }
 

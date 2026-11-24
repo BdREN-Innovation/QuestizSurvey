@@ -169,7 +169,32 @@ export default function AdminUserDetail() {
                 {user.email_verified ? 'Email verified' : 'Unverified'}
               </Badge>
               {user.is_superuser ? <Badge variant="outline">Superuser</Badge> : null}
+              {user.has_usable_password === false ? (
+                <Badge variant="warning">No password</Badge>
+              ) : null}
             </div>
+            {user.external_identities?.length ? (
+              <div className="sm:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Single sign-on
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {user.external_identities.map((identity) => (
+                    <li
+                      key={identity.id}
+                      className="rounded-[1rem] border border-[rgb(var(--theme-border-rgb)/0.76)] bg-white/80 px-4 py-3 text-sm"
+                    >
+                      <p className="font-medium text-foreground break-all">{identity.issuer}</p>
+                      <p className="mt-1 text-muted-foreground break-all">
+                        Subject {identity.subject} · linked {formatDateTime(identity.created_at)} via{' '}
+                        {identity.linked_via.replace('_', ' ')} · last SSO sign-in{' '}
+                        {formatDateTime(identity.last_login_at)}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

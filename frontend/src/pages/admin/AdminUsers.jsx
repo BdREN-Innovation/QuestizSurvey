@@ -42,6 +42,7 @@ export default function AdminUsers() {
       search: searchParams.get('search') || '',
       plan: searchParams.get('plan') || '',
       is_active: searchParams.get('is_active') || '',
+      sso_linked: searchParams.get('sso_linked') || '',
       ordering: searchParams.get('ordering') || '-created_at',
     }),
     [searchParams]
@@ -81,9 +82,12 @@ export default function AdminUsers() {
         accessorKey: 'is_active',
         header: 'Status',
         cell: ({ row }) => (
-          <Badge variant={row.original.is_active ? 'success' : 'danger'}>
-            {row.original.is_active ? 'Active' : 'Inactive'}
-          </Badge>
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant={row.original.is_active ? 'success' : 'danger'}>
+              {row.original.is_active ? 'Active' : 'Inactive'}
+            </Badge>
+            {row.original.sso_linked ? <Badge variant="outline">SSO linked</Badge> : null}
+          </div>
         ),
       },
       {
@@ -124,7 +128,7 @@ export default function AdminUsers() {
           <CardTitle>Users</CardTitle>
           <CardDescription>Search, filter, and inspect Questiz accounts.</CardDescription>
         </div>
-        <div className="grid gap-3 lg:grid-cols-[1.4fr_repeat(3,minmax(0,0.8fr))]">
+        <div className="grid gap-3 lg:grid-cols-[1.4fr_repeat(4,minmax(0,0.8fr))]">
           <Input
             placeholder="Search username or email"
             value={params.search}
@@ -144,6 +148,15 @@ export default function AdminUsers() {
               { label: 'All statuses', value: '' },
               { label: 'Active', value: 'true' },
               { label: 'Inactive', value: 'false' },
+            ]}
+          />
+          <CustomSelect
+            value={params.sso_linked}
+            onChange={(value) => updateSearchParams(searchParams, { sso_linked: value }, setSearchParams)}
+            options={[
+              { label: 'Any sign-in', value: '' },
+              { label: 'SSO linked', value: 'true' },
+              { label: 'Not linked', value: 'false' },
             ]}
           />
           <CustomSelect

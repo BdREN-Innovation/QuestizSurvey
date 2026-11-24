@@ -8,6 +8,11 @@ psycopg2-binary==2.9.9
 # Authentication
 djangorestframework-simplejwt==5.3.1
 
+# Single sign-on (OpenID Connect client)
+Authlib==1.9.10
+joserfc==1.8.0
+requests==2.34.2
+
 # CORS
 django-cors-headers==4.3.1
 
@@ -28,6 +33,7 @@ cryptography==45.0.7
 # Testing
 pytest==8.0.0
 pytest-django==4.8.0
+responses==0.26.3
 
 # Code quality
 flake8==7.0.0

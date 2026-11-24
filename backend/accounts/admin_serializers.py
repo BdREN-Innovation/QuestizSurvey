@@ -7,7 +7,7 @@ from subscriptions.serializers import PlanSummarySerializer
 from subscriptions.services import LicenseService
 
 from .ai_secrets import get_ai_api_key_meta
-from .models import SiteSettings
+from .models import ExternalIdentity, SiteSettings
 
 User = get_user_model()
 
@@ -34,6 +34,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
     current_plan = serializers.SerializerMethodField()
     survey_count = serializers.IntegerField(read_only=True)
     response_count = serializers.IntegerField(read_only=True)
+    sso_linked = serializers.BooleanField(read_only=True, default=False)
 
     class Meta:
         model = User
@@ -49,6 +50,7 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             "current_plan",
             "survey_count",
             "response_count",
+            "sso_linked",
             "created_at",
             "last_login",
         ]
@@ -59,8 +61,24 @@ class AdminUserListSerializer(serializers.ModelSerializer):
         return PlanSummarySerializer(plan).data
 
 
+class AdminExternalIdentitySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExternalIdentity
+        fields = [
+            "id",
+            "issuer",
+            "subject",
+            "email_at_link",
+            "linked_via",
+            "created_at",
+            "last_login_at",
+        ]
+
+
 class AdminUserDetailSerializer(serializers.ModelSerializer):
     subscription = serializers.SerializerMethodField()
+    external_identities = AdminExternalIdentitySerializer(many=True, read_only=True)
+    has_usable_password = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -81,7 +99,12 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "last_login",
             "subscription",
+            "external_identities",
+            "has_usable_password",
         ]
+
+    def get_has_usable_password(self, obj):
+        return obj.has_usable_password()
 
     def get_subscription(self, obj):
         subscription = getattr(obj, "subscription", None) or LicenseService.get_user_subscription(

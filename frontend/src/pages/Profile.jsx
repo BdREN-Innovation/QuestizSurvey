@@ -20,6 +20,7 @@ import {
 } from '@/services/payments'
 import { cancelSubscription, getSubscription } from '@/services/subscriptions'
 import PlanBadge from '@/components/subscription/PlanBadge'
+import SsoLinkCard from '@/components/auth/SsoLinkCard'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -616,6 +617,8 @@ const Profile = () => {
               </form>
             </CardContent>
           </Card>
+
+          <SsoLinkCard />
         </div>
       </div>
     </div>
