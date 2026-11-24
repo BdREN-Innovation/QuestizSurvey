@@ -19,6 +19,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from questizsurvey.audit import log_audit_event
 
 from . import sso
+from .authentication import SSO_SESSION_ENDED_DETAIL
 
 from .models import EmailVerificationToken
 from .subnet_limits import (
@@ -251,6 +252,23 @@ class VerifiedTokenRefreshView(TokenRefreshView):
                 token = RefreshToken(refresh_token)
                 user_id = token.get("user_id")
                 user = User.objects.filter(pk=user_id).only("id", "email", "email_verified").first()
+                sso_session_id = token.get(sso.SSO_SESSION_CLAIM)
+                if sso.is_session_ended(sso_session_id):
+                    log_audit_event(
+                        "token_refresh_denied",
+                        outcome="failure",
+                        level="warning",
+                        request=request,
+                        actor_user=user,
+                        reason="sso_session_ended",
+                    )
+                    response = Response(
+                        {"detail": SSO_SESSION_ENDED_DETAIL, "code": "sso_session_ended"},
+                        status=status.HTTP_401_UNAUTHORIZED,
+                    )
+                    clear_refresh_cookie(response)
+                    return response
+                sso.touch_session(sso_session_id)
                 if user and is_email_verification_required() and not user.email_verified:
                     log_audit_event(
                         "token_refresh_denied",

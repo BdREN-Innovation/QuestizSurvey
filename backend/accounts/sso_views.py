@@ -154,8 +154,10 @@ def sso_callback_view(request):
 
     bdren_billing.prime_after_sign_in(user, getattr(django_request, "sso_id_token", ""))
 
+    sso_session = sso.start_session(user, claims)
     refresh = RefreshToken.for_user(user)
     refresh[sso.AUTH_METHOD_CLAIM] = sso.AUTH_METHOD_SSO
+    refresh[sso.SSO_SESSION_CLAIM] = str(sso_session.id)
     update_last_login(None, user)
     log_audit_event("sso_login_success", request=request, actor_user=user, outcome_detail=outcome)
 
@@ -203,3 +205,39 @@ def sso_unlink_view(request):
     identity.delete()
     log_audit_event("sso_unlink", request=request, actor_user=request.user, issuer=issuer)
     return Response({"detail": "Unlinked."})
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def sso_backchannel_logout_view(request):
+    """OpenID Connect Back-Channel Logout: the provider says a sign-in session ended.
+
+    Called server to server by the provider (ZITADEL), never by a browser. The signed
+    ``logout_token`` names the session (``sid``) or the person (``sub``); their Questiz tokens
+    stop working at once. Answers 200 when accepted and 400 when the token is not valid.
+    """
+    _require_enabled()
+    try:
+        claims = sso.verify_logout_token(request.data.get("logout_token"))
+    except sso.SSOError as exc:
+        log_audit_event(
+            "sso_backchannel_logout",
+            outcome="failure",
+            level="warning",
+            request=request,
+            reason=exc.code,
+            detail=exc.detail,
+        )
+        response = Response({"error": "invalid_request"}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        ended = sso.end_sessions(claims)
+        log_audit_event(
+            "sso_backchannel_logout",
+            request=request,
+            issuer=claims["iss"],
+            sessions_ended=ended,
+        )
+        response = Response(status=status.HTTP_200_OK)
+    response["Cache-Control"] = "no-store"
+    return response

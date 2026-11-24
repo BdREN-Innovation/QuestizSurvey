@@ -157,3 +157,33 @@ class ExternalIdentity(models.Model):
 
     def __str__(self):
         return f"{self.issuer} {self.subject} -> {self.user_id}"
+
+
+class SsoSession(models.Model):
+    """One SSO sign-in, so the provider can end it later through back-channel logout.
+
+    Questiz tokens from an SSO sign-in carry this row's id (claim ``sso_session``). When the
+    provider reports that its session ``sid`` ended, the row gets ``ended_at`` and those tokens
+    stop working, on API calls and on refresh. Password sign-ins have no row.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sso_sessions")
+    issuer = models.CharField(max_length=255)
+    subject = models.CharField(max_length=255)
+    sid = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now_add=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["issuer", "sid"], name="accounts_sso_session_sid_idx"),
+            models.Index(fields=["issuer", "subject"], name="accounts_sso_session_sub_idx"),
+            models.Index(fields=["last_seen_at"], name="accounts_sso_session_seen_idx"),
+        ]
+
+    def __str__(self):
+        state = "ended" if self.ended_at else "active"
+        return f"{self.subject} {self.sid or '-'} ({state})"

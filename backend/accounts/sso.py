@@ -12,15 +12,18 @@ import logging
 import re
 import secrets
 import threading
+import time
+from datetime import timedelta
 
 from authlib.integrations.django_client import OAuth
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 
-from .models import ExternalIdentity
+from .models import ExternalIdentity, SsoSession
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -32,6 +35,17 @@ LINK_TOKEN_TTL_SECONDS = 5 * 60
 LINK_TOKEN_CACHE_PREFIX = "sso:link:"
 AUTH_METHOD_CLAIM = "auth_method"
 AUTH_METHOD_SSO = "sso"
+# Questiz tokens from an SSO sign-in carry the SsoSession id under this claim.
+SSO_SESSION_CLAIM = "sso_session"
+SESSION_STATE_CACHE_PREFIX = "sso:session:"
+SESSION_ACTIVE_CACHE_SECONDS = 60
+SESSION_ENDED_CACHE_SECONDS = 24 * 60 * 60
+SESSION_SEEN_UPDATE_SECONDS = 60 * 60
+BACKCHANNEL_LOGOUT_EVENT = "http://schemas.openid.net/event/backchannel-logout"
+LOGOUT_TOKEN_MAX_AGE_SECONDS = 30 * 60
+LOGOUT_JTI_CACHE_PREFIX = "sso:logout-jti:"
+JWKS_REFRESH_CACHE_KEY = "sso:jwks-forced-refresh"
+JWKS_REFRESH_MIN_INTERVAL_SECONDS = 5 * 60
 
 
 class SSOError(Exception):
@@ -370,3 +384,155 @@ def linked_identity(user):
     if not is_enabled() or not getattr(user, "pk", None):
         return None
     return ExternalIdentity.objects.filter(user=user, issuer=settings.SSO_ISSUER).first()
+
+
+# --- Sign-in sessions and back-channel logout --------------------------------------------------
+#
+# The provider tells us a session ended by POSTing a signed logout token (OpenID Connect
+# Back-Channel Logout 1.0). We keep one SsoSession row per SSO sign-in, tag the Questiz tokens
+# with its id, and refuse tokens of an ended row on every API call and on refresh.
+
+
+def start_session(user, claims):
+    """Record a new SSO sign-in and return its SsoSession. Also prunes the user's stale rows."""
+    now = timezone.now()
+    stale_before = now - settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"] - timedelta(days=1)
+    SsoSession.objects.filter(user=user, last_seen_at__lt=stale_before).delete()
+    return SsoSession.objects.create(
+        user=user,
+        issuer=claims["iss"],
+        subject=str(claims["sub"]),
+        sid=str(claims.get("sid") or "")[:255],
+    )
+
+
+def _session_cache_key(session_id):
+    return f"{SESSION_STATE_CACHE_PREFIX}{session_id}"
+
+
+def is_session_ended(session_id):
+    """True when the SSO session behind a Questiz token was ended (or no longer exists)."""
+    if not session_id:
+        return False
+    key = _session_cache_key(session_id)
+    state = cache.get(key)
+    if state is None:
+        try:
+            row = SsoSession.objects.filter(pk=session_id).values("ended_at").first()
+        except (ValueError, TypeError, DjangoValidationError):
+            row = None
+        state = "active" if row and row["ended_at"] is None else "ended"
+        timeout = SESSION_ACTIVE_CACHE_SECONDS if state == "active" else SESSION_ENDED_CACHE_SECONDS
+        cache.set(key, state, timeout)
+    return state == "ended"
+
+
+def touch_session(session_id):
+    """Note that a session is still in use (at most hourly), so pruning keeps it."""
+    if not session_id:
+        return
+    cutoff = timezone.now() - timedelta(seconds=SESSION_SEEN_UPDATE_SECONDS)
+    try:
+        SsoSession.objects.filter(pk=session_id, last_seen_at__lt=cutoff).update(
+            last_seen_at=timezone.now()
+        )
+    except (ValueError, TypeError, DjangoValidationError):
+        pass
+
+
+def _load_jwk_set(force=False):
+    from joserfc.jwk import KeySet
+
+    return KeySet.import_key_set(get_client().fetch_jwk_set(force=force))
+
+
+def _decode_logout_token(raw_token):
+    from joserfc import jwt
+    from joserfc.errors import JoseError
+
+    header = _id_token_header(raw_token)
+    if header.get("alg") not in ALLOWED_ID_TOKEN_ALGORITHMS:
+        raise SSOError(ERROR_TOKEN, f"Disallowed logout token algorithm {header.get('alg')!r}")
+    try:
+        key_set = _load_jwk_set()
+        kid = header.get("kid")
+        if kid and not any(key.kid == kid for key in key_set.keys):
+            # The provider rotated its signing key. Refetch, but not on every forged token.
+            if cache.add(JWKS_REFRESH_CACHE_KEY, 1, JWKS_REFRESH_MIN_INTERVAL_SECONDS):
+                key_set = _load_jwk_set(force=True)
+        return jwt.decode(raw_token, key_set, algorithms=sorted(ALLOWED_ID_TOKEN_ALGORITHMS)).claims
+    except JoseError as exc:
+        raise SSOError(ERROR_TOKEN, f"Logout token rejected: {exc.__class__.__name__}") from exc
+    except SSOError:
+        raise
+    except Exception as exc:  # unknown kid, network errors, bad JWKS
+        raise SSOError(ERROR_TOKEN, f"Logout token not verified: {exc.__class__.__name__}") from exc
+
+
+def verify_logout_token(raw_token):
+    """Verify a back-channel logout token and return its claims, or raise SSOError.
+
+    Checks (Back-Channel Logout 1.0, section 2.6): RS256 signature against the provider's JWKS,
+    ``iss``, ``aud`` contains our client id, ``iat`` recent, ``exp`` if present, a ``jti`` not
+    seen before, the logout event, no ``nonce``, and at least one of ``sub``/``sid``.
+    """
+    raw_token = (raw_token or "").strip()
+    if not raw_token or raw_token.count(".") != 2:
+        raise SSOError(ERROR_TOKEN, "Missing or malformed logout token")
+    claims = dict(_decode_logout_token(raw_token))
+
+    now = int(time.time())
+    leeway = ID_TOKEN_LEEWAY_SECONDS
+    audience = claims.get("aud")
+    audiences = [audience] if isinstance(audience, str) else list(audience or [])
+    iat, exp = claims.get("iat"), claims.get("exp")
+    events = claims.get("events")
+    problems = [
+        (claims.get("iss") != settings.SSO_ISSUER, "issuer"),
+        (settings.SSO_CLIENT_ID not in audiences, "audience"),
+        (not isinstance(iat, (int, float)), "iat missing"),
+        (isinstance(iat, (int, float)) and iat > now + leeway, "iat in the future"),
+        (isinstance(iat, (int, float)) and now - iat > LOGOUT_TOKEN_MAX_AGE_SECONDS, "iat too old"),
+        (exp is not None and (not isinstance(exp, (int, float)) or exp < now - leeway), "expired"),
+        (not str(claims.get("jti") or "").strip(), "jti missing"),
+        (not isinstance(events, dict) or BACKCHANNEL_LOGOUT_EVENT not in events, "logout event"),
+        ("nonce" in claims, "nonce present"),
+        (not claims.get("sub") and not claims.get("sid"), "no sub or sid"),
+    ]
+    for failed, reason in problems:
+        if failed:
+            raise SSOError(ERROR_TOKEN, f"Logout token invalid: {reason}")
+
+    if not cache.add(f"{LOGOUT_JTI_CACHE_PREFIX}{claims['jti']}", 1, LOGOUT_TOKEN_MAX_AGE_SECONDS * 2):
+        raise SSOError(ERROR_TOKEN, "Logout token replayed")
+    return claims
+
+
+def end_sessions(claims):
+    """End the SSO sessions a verified logout token names. Returns how many were ended.
+
+    With ``sid``: that provider session only (and, if the provider left ``sid`` out of the
+    id_token at sign-in, the subject's sessions recorded without one). Without ``sid``: every
+    session of the subject.
+    """
+    issuer = claims["iss"]
+    sid = str(claims.get("sid") or "")
+    subject = str(claims.get("sub") or "")
+    open_sessions = SsoSession.objects.filter(issuer=issuer, ended_at__isnull=True)
+
+    if sid:
+        matched = open_sessions.filter(sid=sid)
+        if subject:
+            matched = matched.filter(subject=subject)
+            without_sid = open_sessions.filter(subject=subject, sid="")
+            matched = matched | without_sid
+    else:
+        matched = open_sessions.filter(subject=subject)
+
+    session_ids = list(matched.values_list("id", flat=True))
+    if not session_ids:
+        return 0
+    SsoSession.objects.filter(pk__in=session_ids).update(ended_at=timezone.now())
+    for session_id in session_ids:
+        cache.set(_session_cache_key(session_id), "ended", SESSION_ENDED_CACHE_SECONDS)
+    return len(session_ids)

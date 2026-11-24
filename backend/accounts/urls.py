@@ -11,6 +11,7 @@ from .sso_views import (
     sso_link_start_view,
     sso_login_view,
     sso_unlink_view,
+    sso_backchannel_logout_view,
 )
 from .views import (
     RegisterView,
@@ -66,6 +67,7 @@ urlpatterns = [
     path("sso/callback/", sso_callback_view, name="sso_callback"),
     path("sso/link/", sso_link_start_view, name="sso_link_start"),
     path("sso/unlink/", sso_unlink_view, name="sso_unlink"),
+    path("sso/backchannel-logout/", sso_backchannel_logout_view, name="sso_backchannel_logout"),
     # User management
     path("user/", get_user_view, name="get_user"),
     path("user/update/", UpdateProfileView.as_view(), name="update_profile"),
