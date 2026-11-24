@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from questizsurvey.audit import log_audit_event
+from subscriptions import bdren
 from subscriptions.admin_services import AdminPaymentsService
 from subscriptions.bkash_service import (
     BkashConfigurationError,
@@ -252,6 +253,15 @@ class AdminUserDetailView(AdminAPIView):
                     )
                 locked_user.is_active = next_is_active
                 locked_user.save(update_fields=["is_active"])
+
+            if "plan_id" in validated and bdren.is_bdren_mode():
+                return Response(
+                    {
+                        **bdren.gone_payload(),
+                        "detail": "Plans are managed on bdren.ai; change this user's package there.",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
             if "plan_id" in validated:
                 plan = get_object_or_404(Plan.objects.filter(is_active=True), pk=validated["plan_id"])

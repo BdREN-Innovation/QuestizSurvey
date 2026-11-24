@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   BriefcaseBusiness,
   Building2,
@@ -20,6 +19,8 @@ import {
 } from '@/services/payments'
 import { cancelSubscription, getSubscription } from '@/services/subscriptions'
 import PlanBadge from '@/components/subscription/PlanBadge'
+import PlanLink from '@/components/subscription/PlanLink'
+import { useBillingConfig } from '@/services/billing'
 import SsoLinkCard from '@/components/auth/SsoLinkCard'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -112,6 +113,7 @@ const Profile = () => {
   const [renewingBkash, setRenewingBkash] = useState(false)
   const [cancelingSubscription, setCancelingSubscription] = useState(false)
   const [avatarPreview, setAvatarPreview] = useState('')
+  const { managedExternally, providerLabel } = useBillingConfig()
 
   useEffect(() => {
     setFormData(buildFormState(user))
@@ -163,7 +165,10 @@ const Profile = () => {
 
   const displayName =
     `${formData.first_name} ${formData.last_name}`.trim() || user?.username || 'Your profile'
-  const currentPlan = subscription?.plan || user?.current_plan || { name: 'Free', slug: 'free', tier: 0 }
+  // With bdren.ai managing plans, the effective plan is on the user; the local subscription is legacy.
+  const currentPlan =
+    (managedExternally ? user?.current_plan : subscription?.plan || user?.current_plan) ||
+    { name: 'Free', slug: 'free', tier: 0 }
   const billingProvider = subscription?.payment_provider || 'none'
   const isStripeSubscription =
     billingProvider === 'stripe' && currentPlan?.slug && currentPlan.slug !== 'free'
@@ -468,6 +473,11 @@ const Profile = () => {
                     <span className="text-sm font-medium text-muted-foreground">Current plan</span>
                     <PlanBadge plan={currentPlan} />
                   </div>
+                  {managedExternally ? (
+                    <p className="theme-panel-soft px-4 py-3 text-sm text-muted-foreground">
+                      Your plan and payments are managed in your {providerLabel} account.
+                    </p>
+                  ) : (
                   <div className="theme-panel-soft flex items-center gap-3 px-4 py-3">
                     <span className="theme-icon-secondary inline-flex h-10 w-10 items-center justify-center rounded-full">
                       <CalendarDays className="h-4 w-4" />
@@ -486,8 +496,9 @@ const Profile = () => {
                       ) : null}
                     </div>
                   </div>
+                  )}
                 <Button asChild variant="outline" className="rounded-full">
-                  <Link to="/pricing">Manage plan</Link>
+                  <PlanLink>{managedExternally ? `Manage plan on ${providerLabel}` : 'Manage plan'}</PlanLink>
                 </Button>
                 {isStripeSubscription ? (
                   <Button
@@ -502,15 +513,17 @@ const Profile = () => {
                 ) : null}
                 {isBkashSubscription ? (
                   <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="rounded-full"
-                      disabled={renewingBkash || subscription?.cancel_at_period_end}
-                      onClick={handleBkashRenewal}
-                    >
-                      {renewingBkash ? 'Opening bKash...' : 'Renew now'}
-                    </Button>
+                    {managedExternally ? null : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-full"
+                        disabled={renewingBkash || subscription?.cancel_at_period_end}
+                        onClick={handleBkashRenewal}
+                      >
+                        {renewingBkash ? 'Opening bKash...' : 'Renew now'}
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"

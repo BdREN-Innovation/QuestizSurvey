@@ -7,7 +7,6 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.files.uploadedfile import SimpleUploadedFile
 from PIL import Image, ImageOps, ImageSequence, UnidentifiedImageError
 
-from subscriptions.serializers import PlanSummarySerializer
 from subscriptions.services import LicenseService
 
 User = get_user_model()
@@ -109,8 +108,7 @@ class UserSerializer(serializers.ModelSerializer):
         return linked_identity(obj) is not None
 
     def get_current_plan(self, obj):
-        plan = LicenseService.get_user_plan(obj)
-        return PlanSummarySerializer(plan).data
+        return LicenseService.get_effective_plan(obj).summary()
 
     def get_can_access_admin(self, obj):
         return bool(obj.is_superuser)

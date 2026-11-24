@@ -19,6 +19,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from questizsurvey.audit import log_audit_event
 
+from subscriptions import bdren as bdren_billing
+
 from . import sso
 from .throttles import SSORateThrottle
 from .token_cookies import set_refresh_cookie
@@ -149,6 +151,8 @@ def sso_callback_view(request):
             linked_via=outcome,
             issuer=claims["iss"],
         )
+
+    bdren_billing.prime_after_sign_in(user, getattr(django_request, "sso_id_token", ""))
 
     refresh = RefreshToken.for_user(user)
     refresh[sso.AUTH_METHOD_CLAIM] = sso.AUTH_METHOD_SSO

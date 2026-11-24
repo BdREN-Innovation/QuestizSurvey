@@ -404,6 +404,7 @@ CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://127.0.0.1:6379/
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", CELERY_BROKER_URL)
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_EAGER_PROPAGATES = env_bool("CELERY_TASK_EAGER_PROPAGATES", True)
+# The renewal-reminder and expiry tasks skip themselves when BILLING_MODE is "bdren".
 CELERY_BEAT_SCHEDULE = {
     "subscriptions-check-expiring-subscriptions": {
         "task": "subscriptions.tasks.check_expiring_subscriptions",
@@ -536,6 +537,46 @@ BKASH_BASE_URL = os.environ.get(
     "BKASH_BASE_URL",
     "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
 )
+
+# Billing: "local" (Stripe/bKash checkout in Questiz) or "bdren" (plans and payments live on
+# bdren.ai; Questiz reads each person's limits from the bdren.ai allowance API). Defaults to
+# "bdren" when a bdren.ai product key is configured. See subscriptions/bdren.py.
+BDREN_API_URL = os.environ.get("BDREN_API_URL", "").strip().rstrip("/")
+BDREN_PRODUCT_API_KEY = os.environ.get("BDREN_PRODUCT_API_KEY", "").strip()
+BDREN_PRODUCT_SLUG = os.environ.get("BDREN_PRODUCT_SLUG", "questiz").strip()
+BDREN_WEBHOOK_SECRET = os.environ.get("BDREN_WEBHOOK_SECRET", "").strip()
+BDREN_UPGRADE_URL = os.environ.get(
+    "BDREN_UPGRADE_URL", "https://bdren.ai/profile/billing"
+).strip()
+BDREN_HTTP_TIMEOUT = env_int("BDREN_HTTP_TIMEOUT", 5, minimum=1)
+BDREN_ALLOWANCE_CACHE_SECONDS = env_int("BDREN_ALLOWANCE_CACHE_SECONDS", 600, minimum=0)
+BDREN_ALLOWANCE_STALE_SECONDS = env_int(
+    "BDREN_ALLOWANCE_STALE_SECONDS", 24 * 3600, minimum=60
+)
+BILLING_MODE = (
+    os.environ.get("BILLING_MODE", "bdren" if BDREN_PRODUCT_API_KEY else "local")
+    .strip()
+    .lower()
+)
+if BILLING_MODE not in {"local", "bdren"}:
+    raise ImproperlyConfigured("BILLING_MODE must be 'local' or 'bdren'.")
+if BILLING_MODE == "bdren":
+    _missing_bdren = [
+        name
+        for name, value in (
+            ("BDREN_API_URL", BDREN_API_URL),
+            ("BDREN_PRODUCT_API_KEY", BDREN_PRODUCT_API_KEY),
+        )
+        if not value
+    ]
+    if _missing_bdren:
+        raise ImproperlyConfigured(
+            "BILLING_MODE is 'bdren' but these are not set: " + ", ".join(_missing_bdren)
+        )
+    if not SSO_ENABLED:
+        raise ImproperlyConfigured(
+            "BILLING_MODE 'bdren' needs bdren.ai sign-in (SSO_ENABLED) to know who each user is."
+        )
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 AUDIT_LOG_LEVEL = os.environ.get("AUDIT_LOG_LEVEL", "INFO")

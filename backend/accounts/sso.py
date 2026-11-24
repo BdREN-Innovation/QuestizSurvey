@@ -164,6 +164,8 @@ def fetch_verified_claims(request):
     claims = dict(claims)
     if claims.get("iss") != issuer or not str(claims.get("sub") or "").strip():
         raise SSOError(ERROR_TOKEN, "Issuer or subject missing")
+    # Kept on the request (never stored) so the bdren.ai allowance call at sign-in can pass it.
+    request.sso_id_token = id_token
     return claims
 
 

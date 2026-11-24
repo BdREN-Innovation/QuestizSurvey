@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 
 import BrandLogo from '@/components/branding/BrandLogo'
+import PlanLink from '@/components/subscription/PlanLink'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -668,7 +669,7 @@ export default function Home() {
                   {isAuthenticated ? 'Go to Dashboard' : 'Get Started Free'}
                 </Button>
               </Link>
-              <Link to="/pricing">
+              <PlanLink>
                 <Button
                   size="lg"
                   variant="outline"
@@ -676,7 +677,7 @@ export default function Home() {
                 >
                   Upgrade
                 </Button>
-              </Link>
+              </PlanLink>
             </div>
           </div>
         </div>
@@ -690,11 +691,17 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-            {FOOTER_LINKS.map(([label, to]) => (
-              <Link key={label} to={to} className="transition-colors hover:text-foreground">
-                {label}
-              </Link>
-            ))}
+            {FOOTER_LINKS.map(([label, to]) =>
+              to === '/pricing' ? (
+                <PlanLink key={label} className="transition-colors hover:text-foreground">
+                  {label}
+                </PlanLink>
+              ) : (
+                <Link key={label} to={to} className="transition-colors hover:text-foreground">
+                  {label}
+                </Link>
+              )
+            )}
           </div>
         </footer>
       </section>

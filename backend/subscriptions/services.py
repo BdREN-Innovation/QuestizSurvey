@@ -8,6 +8,7 @@ from django.utils import timezone
 from accounts.models import SiteSettings
 from surveys.models import Question, Survey, SurveyResponse
 
+from . import bdren
 from .models import Plan, SubscriptionEvent, UserSubscription
 
 
@@ -108,83 +109,106 @@ class LicenseService:
         return cls.get_user_subscription(user, for_update=for_update).plan
 
     @classmethod
+    def get_effective_plan(cls, user, *, for_update=False):
+        """The limits that apply to ``user``: their local plan, or the bdren.ai-managed one.
+
+        With ``for_update`` the user's subscription row is locked (serialising concurrent creates);
+        in bdren mode the allowance is fetched before the lock so no HTTP call holds it.
+        """
+        if bdren.is_bdren_mode():
+            plan = bdren.effective_plan(user, cls.get_free_plan())
+            if for_update:
+                cls.get_user_subscription(user, for_update=True)
+            return plan
+        return bdren.EffectivePlan.from_plan(
+            cls.get_user_plan(user, for_update=for_update)
+        )
+
+    @classmethod
+    def _upgrade_hint(cls):
+        if bdren.is_bdren_mode():
+            return "Upgrade your plan on bdren.ai"
+        return "Upgrade"
+
+    @staticmethod
+    def _limit_info(limit):
+        # Wire format kept from local plans: 0 + unlimited=True means no limit.
+        return {"limit": 0 if limit is None else limit, "unlimited": limit is None}
+
+    @classmethod
     def get_usage_snapshot(cls, user):
-        plan = cls.get_user_plan(user)
+        plan = cls.get_effective_plan(user)
         used_surveys = Survey.objects.filter(user=user).count()
         return {
-            "surveys": {
-                "used": used_surveys,
-                "limit": plan.max_surveys,
-                "unlimited": plan.max_surveys == 0,
-            },
-            "questions_per_survey": {
-                "limit": plan.max_questions_per_survey,
-                "unlimited": plan.max_questions_per_survey == 0,
-            },
-            "responses_per_survey": {
-                "limit": plan.max_responses_per_survey,
-                "unlimited": plan.max_responses_per_survey == 0,
-            },
+            "surveys": {"used": used_surveys, **cls._limit_info(plan.max_surveys)},
+            "questions_per_survey": cls._limit_info(plan.max_questions_per_survey),
+            "responses_per_survey": cls._limit_info(plan.max_responses_per_survey),
             "plan": {
                 "name": plan.name,
                 "slug": plan.slug,
                 "tier": plan.tier,
             },
+            "billing": {
+                **bdren.public_config(),
+                "plan_source": plan.extra.get("plan_source", ""),
+                "institution": plan.extra.get("institution"),
+                "managed_by_fallback": plan.source == "bdren_fallback",
+            },
         }
 
     @classmethod
-    def check_can_create_survey(cls, user, *, for_update=False):
-        plan = cls.get_user_plan(user, for_update=for_update)
-        if plan.max_surveys == 0:
+    def check_can_create_survey(cls, user, *, for_update=False, plan=None):
+        plan = plan or cls.get_effective_plan(user, for_update=for_update)
+        if plan.max_surveys is None:
             return LimitCheckResult(True)
 
         survey_count = Survey.objects.filter(user=user).count()
         if survey_count >= plan.max_surveys:
             return LimitCheckResult(
                 False,
-                f"You've reached the maximum of {plan.max_surveys} surveys on the {plan.name} plan. Upgrade to create more.",
+                f"You've reached the maximum of {plan.max_surveys} surveys on the {plan.name} plan. {cls._upgrade_hint()} to create more.",
             )
 
         return LimitCheckResult(True)
 
     @classmethod
     def check_can_duplicate_survey(cls, survey, *, for_update=False):
-        create_check = cls.check_can_create_survey(survey.user, for_update=for_update)
+        plan = cls.get_effective_plan(survey.user, for_update=for_update)
+        create_check = cls.check_can_create_survey(survey.user, plan=plan)
         if not create_check.allowed:
             return create_check
 
-        plan = cls.get_user_plan(survey.user, for_update=for_update)
-        if plan.max_questions_per_survey == 0:
+        if plan.max_questions_per_survey is None:
             return LimitCheckResult(True)
 
         question_count = Question.objects.filter(page__survey=survey).count()
         if question_count > plan.max_questions_per_survey:
             return LimitCheckResult(
                 False,
-                f"This survey has {question_count} questions, which exceeds the {plan.name} plan limit of {plan.max_questions_per_survey} questions per survey. Upgrade to duplicate it.",
+                f"This survey has {question_count} questions, which exceeds the {plan.name} plan limit of {plan.max_questions_per_survey} questions per survey. {cls._upgrade_hint()} to duplicate it.",
             )
 
         return LimitCheckResult(True)
 
     @classmethod
     def check_can_add_question(cls, survey, *, extra_questions=1, for_update=False):
-        plan = cls.get_user_plan(survey.user, for_update=for_update)
-        if plan.max_questions_per_survey == 0:
+        plan = cls.get_effective_plan(survey.user, for_update=for_update)
+        if plan.max_questions_per_survey is None:
             return LimitCheckResult(True)
 
         question_count = Question.objects.filter(page__survey=survey).count()
         if question_count + extra_questions > plan.max_questions_per_survey:
             return LimitCheckResult(
                 False,
-                f"You've reached the maximum of {plan.max_questions_per_survey} questions on the {plan.name} plan for a single survey. Upgrade to add more.",
+                f"You've reached the maximum of {plan.max_questions_per_survey} questions on the {plan.name} plan for a single survey. {cls._upgrade_hint()} to add more.",
             )
 
         return LimitCheckResult(True)
 
     @classmethod
     def check_can_accept_response(cls, survey, *, for_update=False):
-        plan = cls.get_user_plan(survey.user, for_update=for_update)
-        if plan.max_responses_per_survey == 0:
+        plan = cls.get_effective_plan(survey.user, for_update=for_update)
+        if plan.max_responses_per_survey is None:
             return LimitCheckResult(True)
 
         completed_count = SurveyResponse.objects.filter(

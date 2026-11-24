@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, LoaderCircle } from 'lucide-react'
+import { Check, ExternalLink, LoaderCircle } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router-dom'
 
 import PlanBadge from '@/components/subscription/PlanBadge'
@@ -20,6 +20,7 @@ import {
   createStripeCheckoutSession,
 } from '@/services/payments'
 import { getPlans } from '@/services/subscriptions'
+import { useBillingConfig } from '@/services/billing'
 import { cn } from '@/lib/utils'
 
 function formatLimit(value, label) {
@@ -153,7 +154,7 @@ function ToggleOption({ active, label, onClick }) {
   )
 }
 
-export default function Pricing() {
+function LocalPricing() {
   const { user, isAuthenticated } = useAuth()
   const { toast } = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -505,4 +506,59 @@ export default function Pricing() {
       </div>
     </div>
   )
+}
+
+function ManagedPricing({ manageUrl, providerLabel }) {
+  const { user } = useAuth()
+  const planName = user?.current_plan?.name
+
+  return (
+    <div className="theme-app-gradient min-h-[calc(100vh-4rem)] px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-3xl">
+        <Card className="theme-panel rounded-[2.25rem] border-0">
+          <CardHeader className="space-y-3 px-6 pt-8 md:px-8">
+            <Badge variant="default" className="w-fit">Plans and billing</Badge>
+            <CardTitle className="text-3xl tracking-tight">
+              Your Questiz plan comes from {providerLabel}
+            </CardTitle>
+            <CardDescription className="text-base leading-7">
+              Questiz no longer sells plans on its own. Your package, payments and any
+              institution seat are managed in your {providerLabel} account, and Questiz
+              applies its limits automatically.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5 px-6 pb-8 md:px-8">
+            {planName ? (
+              <div className="theme-panel-soft flex items-center justify-between rounded-2xl px-4 py-3">
+                <span className="text-sm font-medium text-muted-foreground">Current plan</span>
+                <PlanBadge plan={user.current_plan} />
+              </div>
+            ) : null}
+            <Button asChild size="lg" className="rounded-full">
+              <a href={manageUrl} target="_blank" rel="noopener noreferrer">
+                Manage plan on {providerLabel}
+                <ExternalLink className="ml-2 h-4 w-4" />
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+export default function Pricing() {
+  const { loaded, managedExternally, manageUrl, providerLabel } = useBillingConfig()
+
+  if (!loaded) {
+    return (
+      <div className="theme-app-gradient flex min-h-[calc(100vh-4rem)] items-center justify-center">
+        <LoaderCircle className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+  if (managedExternally) {
+    return <ManagedPricing manageUrl={manageUrl} providerLabel={providerLabel} />
+  }
+  return <LocalPricing />
 }
